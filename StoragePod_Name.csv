@@ -1,0 +1,5 @@
+Name,Capacity,Free Space,Alarm Actions,"#Datastores",com.vmware.vcenter.network.folder.externalManaged
+Citrix HDD Datastore Cluster,3.14 TB,3.01 TB,Enabled,4,
+Citrix SSD Datastore Cluster,14.55 TB,10.83 TB,Enabled,6,
+Core HDD Datastore Cluster,3.39 TB,3.06 TB,Enabled,2,
+Core SSD Datastore Cluster,7.28 TB,2.31 TB,Enabled,2,

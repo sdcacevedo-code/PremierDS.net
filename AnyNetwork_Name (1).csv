@@ -1,0 +1,3 @@
+Name,Type,Network Protocol Profile,VMs,Hosts,VC
+Management Network,Standard network,,16,6,FTLPVC01.PremierDS.net
+VM Network,Standard network,,5,0,FTLPVC01.PremierDS.net

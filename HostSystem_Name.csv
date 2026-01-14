@@ -1,0 +1,7 @@
+Name,State,Status,Cluster,Fault Domain,Consumed CPU %,Consumed Memory %,HA State,Memory Tiering,NVMe Device,Uptime,Certificate Valid To,Memory Size (MB),CPUs,NICs,Version,Alarm Actions,AutoDeploy.MachineIdentity
+ftlesx01.premierds.net,,,Citrix Infrastructure,,3,21,,,,,,,8,2,8.0.3,,
+ftlesx02.premierds.net,,,Citrix Infrastructure,,5,15,,,,,,,8,2,8.0.3,,
+ftlesx03.premierds.net,,,Citrix Infrastructure,,2,10,,,,,,,8,2,8.0.3,,
+ftlesx04.premierds.net,,,Citrix Infrastructure,,2,15,,,,,,,8,2,8.0.3,,
+ftlesx05.premierds.net,,,Core Infrastructure,,67,84,,,,,,,4,2,8.0.3,,
+ftlesx06.premierds.net,,,Core Infrastructure,,6,64,,,,,,,4,2,8.0.3,,
