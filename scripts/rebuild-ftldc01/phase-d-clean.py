@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: ascii -*-
 """
-Phase D - Surgical fixes for FTLPDC02 (v1.0.0)
+Phase D - Surgical fixes for FTLPDC02 (v1.1.0)
 
-Findings from Phase C:
-  1. FTLPDC02 has 3 A records in DNS for itself:
-     - 192.168.1.32 (correct)
-     - 169.254.83.107 (APIPA - stale, from disconnected NIC)
-     - fe80:a937:... (link-local IPv6 - Ethernet1)
-     When anything tries FTLPDC02.domain.com, DNS may return the bad
-     one first causing connectivity failure.
+Findings from Phase C + preflight-check:
+  1. FTLPDC02 has multiple A records for itself in its own DNS zone:
+     - 192.168.1.32   (correct, from Ethernet0)
+     - 169.254.83.107 (APIPA, from the Tailscale tunnel NIC)
+     When a client resolves FTLPDC02.domain.com it may get the APIPA
+     address first, causing all authentication to time out.
 
-  2. dnscmd / Get-DnsServer all fail with Access Denied due to
-     machine account Kerberos trust issue.
+  2. dnscmd / Get-DnsServer fail with Access Denied due to the broken
+     machine-account Kerberos trust, so DNS must be edited via ADSI.
 
-This script:
-  1. Disable Ethernet1 NIC (it's the source of the bad addresses)
-  2. Force DNS scavenging + manual A record cleanup via ADSI
-     (bypasses dnscmd which is locked out)
-  3. Re-register FTLPDC02's DNS records
-  4. Attempt machine password reset via netdom WITH password inline
-  5. Verify resolution
+This script (v1.1.0 - updated after preflight-check):
+  1. Disable DNS registration on ALL non-production NICs (keeps them
+     online for remote management but stops them polluting DNS).
+     Previously: disabled the NIC outright. That was wrong - Tailscale
+     is a VPN tunnel we may still need for remote access.
+  2. Delete the stale FTLPDC02 dnsNode via ADSI - probes all three
+     partitions (DomainDnsZones, ForestDnsZones, CN=System) so it
+     works regardless of where the zone lives.
+  3. Re-register FTLPDC02's DNS records (only production IP now).
+  4. Attempt machine-account password reset via netdom (best effort).
+  5. Restart DNS + Netlogon.
+  6. Verify resolution + dcdiag.
 
 Runs on FTLPDC02 as local Administrator.
 """
@@ -111,14 +115,36 @@ def main():
         shell=False, timeout=30, label="list IPv4 addresses"
     )
 
-    r.section("STEP 2: Disable Ethernet1 (source of 169.254.x.x APIPA)")
-    r.log("  Ethernet1 is an unconfigured NIC producing APIPA addresses.")
-    r.log("  Disabling it removes those addresses from DNS registration.")
+    r.section("STEP 2: Stop non-production NICs from registering in DNS")
+    r.log("  Rather than disabling NICs (which could break remote access),")
+    r.log("  we tell Windows not to register non-production NIC addresses.")
+    r.log("  The production NIC is whichever one holds 192.168.1.32.")
+    ps_nodnsreg = r"""
+$ErrorActionPreference = 'Continue'
+$production = '192.168.1.32'
+$adapters = Get-NetAdapter | Where-Object Status -eq 'Up'
+foreach ($a in $adapters) {
+    $ips = Get-NetIPAddress -InterfaceAlias $a.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+           Select-Object -ExpandProperty IPAddress
+    if ($ips -contains $production) {
+        Write-Host ('KEEP DNS registration on: ' + $a.Name + ' (production NIC)')
+        Set-DnsClient -InterfaceAlias $a.Name `
+                      -RegisterThisConnectionsAddress $true `
+                      -UseSuffixWhenRegistering $true `
+                      -ErrorAction SilentlyContinue
+    } else {
+        Write-Host ('STOP DNS registration on : ' + $a.Name + '  (IPs: ' + ($ips -join ',') + ')')
+        Set-DnsClient -InterfaceAlias $a.Name `
+                      -RegisterThisConnectionsAddress $false `
+                      -UseSuffixWhenRegistering $false `
+                      -ErrorAction SilentlyContinue
+    }
+}
+"""
     r.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-         "$nics = Get-NetAdapter | Where-Object { $_.Name -eq 'Ethernet1' -or $_.InterfaceDescription -like '*82574L*' }; "
-         "$nics | ForEach-Object { Write-Host ('Disabling: ' + $_.Name); Disable-NetAdapter -Name $_.Name -Confirm:$false }"],
-        shell=False, timeout=30, label="disable Ethernet1"
+        ["powershell.exe", "-NoProfile", "-NonInteractive",
+         "-ExecutionPolicy", "Bypass", "-Command", ps_nodnsreg],
+        shell=False, timeout=30, label="configure per-NIC DNS registration"
     )
 
     # ====================================================================
@@ -129,20 +155,31 @@ def main():
     r.log("  DNS node directly via LDAP.")
     ps_dns = r"""
 $ErrorActionPreference = 'Continue'
-$dn = "DC=FTLPDC02,DC=PremierDestinationServices.com,CN=MicrosoftDNS,DC=DomainDnsZones,DC=PremierDestinationServices,DC=com"
-Write-Host "Attempting to read: $dn"
-try {
-    $node = [ADSI]"LDAP://localhost/$dn"
-    Write-Host "Current records in dnsNode:"
-    $records = $node.Properties['dnsRecord']
-    Write-Host ("  Count: " + $records.Count)
-    # dnsRecord is binary - we can't easily filter A records vs AAAA by content
-    # Simplest: delete the whole FTLPDC02 node, let Netlogon re-create
-    Write-Host "Strategy: delete entire FTLPDC02 dnsNode, let Netlogon re-register"
-    $node.DeleteTree()
-    Write-Host "Node deleted"
-} catch {
-    Write-Host ("DNS node operation failed: " + $_.Exception.Message)
+$zone = 'PremierDestinationServices.com'
+$domainDn = 'DC=PremierDestinationServices,DC=com'
+$candidates = @(
+    "DC=FTLPDC02,DC=$zone,CN=MicrosoftDNS,DC=DomainDnsZones,$domainDn",
+    "DC=FTLPDC02,DC=$zone,CN=MicrosoftDNS,DC=ForestDnsZones,$domainDn",
+    "DC=FTLPDC02,DC=$zone,CN=MicrosoftDNS,CN=System,$domainDn"
+)
+$deleted = 0
+foreach ($dn in $candidates) {
+    Write-Host ('Probe: ' + $dn)
+    try {
+        $node = [ADSI]"LDAP://localhost/$dn"
+        $null = $node.Name  # forces bind; throws if object does not exist
+        Write-Host '  Found node - deleting entire FTLPDC02 dnsNode.'
+        Write-Host '  Netlogon will re-register only the production NIC next step.'
+        $node.DeleteTree()
+        Write-Host '  Node deleted.'
+        $deleted++
+    } catch {
+        Write-Host ('  Not present in this partition: ' + $_.Exception.Message.Trim())
+    }
+}
+if ($deleted -eq 0) {
+    Write-Host 'WARNING: FTLPDC02 dnsNode was not found in any AD-integrated partition.'
+    Write-Host 'The zone may be file-backed, or DNS is not AD-integrated.'
 }
 """
     r.run(
