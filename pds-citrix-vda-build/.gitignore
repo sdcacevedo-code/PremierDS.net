@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Logs
+*.log
+logs/
+C:/Logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets - NEVER commit
+*.env
+*.pem
+*.key
+secrets.json
