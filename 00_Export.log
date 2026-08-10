@@ -16,6 +16,6 @@
 [2026-01-14 04:24:56] [INFO] Monitoring & Automation data exported successfully
 [2026-01-14 04:24:56] [INFO] Generating Infrastructure Summary...
 [2026-01-14 04:24:56] [INFO] === Infrastructure Data Export Completed ===
-[2026-01-14 04:24:56] [INFO] Export Location: \\PremierDestinationServices.com\NETLOGON\Claude\InfrastructureExports\20260114_042324
+[2026-01-14 04:24:56] [INFO] Export Location: \\SamDario.net\NETLOGON\Claude\InfrastructureExports\20260114_042324
 [2026-01-14 04:24:56] [INFO] Total Files: 17
 [2026-01-14 04:24:56] [INFO] Duration: 92.2790588 seconds
